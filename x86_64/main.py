@@ -375,7 +375,7 @@ def midnight_update():
             fetched_data = []
             fetched_data = get_valid_msg()
             with open(blockchain_index_json_path, 'w') as json_file:
-                json.dump(fetched_data, jsosn_file, indent=4)
+                json.dump(fetched_data, json_file, indent=4)
             
             print('Midnight Update : Successfully copy all valid message from blockchain index')
         
