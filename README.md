@@ -99,17 +99,18 @@ You can also make this script always running when your machine is starting up. P
   sudo nano /etc/systemd/system/road-inspect-core.service
   ```
 
-- Please change `<your_machine>` with your machine name and `<python_version>` with python3 that you are using, for example `python3.10`.
+- Please change `<your_machine_name>` with your machine name and `<python_version>` with python3 that you are using, for example `python3.10`.
    ```
    [Unit]
-   Description=IOTA Websocket Service
+   Description=Road Inspect Core Program
    After=network.target
    
    [Service]
-   User=root
-   ExecStart=/usr/bin/python3 /home/<your_machine>/road-inspect-core/x86_64/main.py
+   User=<your_machine_name>
+   WorkingDirectory=/home/<your_machine_name>
+   ExecStart=/usr/bin/python3 /home/<your_machine_name>/road-inspect-core/x86_64/main.py
    Restart=always
-   Environment="PYTHONPATH=$PYTHONPATH:/home/<your_machine>/.local/lib/<python_version>/site-packages"
+   Environment="PYTHONPATH=$PYTHONPATH:/home/<your_machine_name>/.local/lib/<python_version>/site-packages"
    
    [Install]
    WantedBy=multi-user.target
