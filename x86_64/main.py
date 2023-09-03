@@ -25,7 +25,7 @@ from ellipticcurve import Ecdsa, PrivateKey, PublicKey, Signature
 from ellipticcurve.utils.file import File
 
 # Other Properties
-import subprocess
+import sha3
 import json
 import time
 import os
@@ -79,7 +79,6 @@ def upload(data, index_msg):
     with open(blockchain_index_json_path, 'r') as json_file:
         existing_data = json.load(json_file)
     existing_data.append(recent_data)
-    
     # Save the updated JSON data back to the file
     with open(blockchain_index_json_path, 'w') as json_file:
         json.dump(existing_data, json_file, indent=4)
@@ -102,7 +101,7 @@ def ECDSA_begin():
     #if privateKey is not exist, create pem file
     if os.path.exists(private_key_path) == False:
         # Create new privateKey
-        privateKey = PrivateKey()
+        privateKey = PrivateKey()s
         privateKeyPem = privateKey.toPem()
         
         f = open(private_key_path, "w")
@@ -112,7 +111,6 @@ def ECDSA_begin():
 
 #=======================================================================
 # Function to get all verified message in index
-#
 # Give return a JSON compatible and verified by ECDSA
 #=======================================================================
 def get_valid_msg():
@@ -162,8 +160,6 @@ def get_valid_msg():
                 complete_data += '[{"msgID":"' + msg_id_list[i] + '"},' + full_message + ']'
                 if i < len(msg_id_list)-1:
                     complete_data += ","
-            #else:
-                #print("Not a Payload from This Gateway")
                 
         # delete latest ',' if found
         if complete_data[len(complete_data)-1] == ',':
@@ -174,7 +170,6 @@ def get_valid_msg():
 
         #===============================================================
         # Sort by timestamp
-        #
         # This process will sort JSON by it timestamp
         #===============================================================
         # Remove dictionaries without 'timestamp' key
@@ -193,7 +188,6 @@ def get_valid_msg():
 
 #=======================================================================
 # Function to filter unfinished road report
-#
 # Used for main homepage
 #=======================================================================
 def get_resume(emit_address):
@@ -251,7 +245,6 @@ def get_resume(emit_address):
 
 #=======================================================================
 # Function to get information of a ticket ID
-#
 # return JSON data that contain ticket ID and other linked message
 #=======================================================================
 def ticket_info(ticketID, emit_address):
@@ -327,21 +320,72 @@ def do_command(full_input_command):
             sio.emit(clientSID, "Unknown error")
 
     # Upload data to tangle
-    # Format: data/<parameter_value>/<return_topic>/<specified_tag_index>
+    # Format: data/<parameter_value>/<return_topic>/<specified_tag_index>/<user_key>
     elif command == 'data':
         try :
             parameter_value = parameter_value.replace("'", '"')
             tag_index = parsing_data[3]
-            upload(parameter_value, tag_index)
-            sio.emit(clientSID, tangle_msg_id)
+            
+            # Calculate user keyword hash
+            user_keyword = parsing_data[4].encode('utf-8')
+            keccak256 = sha3.keccak_256()
+            keccak256.update(user_keyword)
+            user_keyword_hash = str(keccak256.hexdigest())
 
+            # Seek for hashKey in target ticket
+            target_hash_key = ''
+            inputJSON = json.loads(parameter_value)
+            
+            # if type is 'report', bypass process
+            # it not, check for hashKey
+            if inputJSON['type'] == 'report':
+                # bypass process
+                upload(parameter_value, tag_index)
+                sio.emit(clientSID, tangle_msg_id)
+                return
+            
+            else :
+                # search it reference ticket
+                reference_ticket = inputJSON['ticket']
+                
+                saved_json = []
+                # Read the JSON data from the file
+                with open(blockchain_index_json_path, 'r') as json_file:
+                    saved_json = json.load(json_file)
+                
+                # get hashKey of reference ticket
+                for y in range(len(saved_json)):
+                    if saved_json[y][0]['msgID'] == reference_ticket:
+                        if "hashKey" in saved_json[y][1]['message']['data'] :
+                            target_hash_key = saved_json[y][1]['message']['data']['hashKey']
+                            
+                            # check is target has key is same or not
+                            if user_keyword_hash == target_hash_key:
+                                upload(parameter_value, tag_index)
+                                sio.emit(clientSID, tangle_msg_id)
+                                return
+                            
+                            else :
+                                # tell client that the key is wrong
+                                sio.emit(clientSID, 'Error: Key is not match')
+                                return
+                        
+                        # if hash key not found, bypass
+                        else :
+                            upload(parameter_value, tag_index)
+                            sio.emit(clientSID, tangle_msg_id)
+                            return
+                        
         except ValueError :
             sio.emit(clientSID, "Error to upload to Tangle")
         except IndexError :
             sio.emit(clientSID, "Format command not found")
+        except Exception as e:
+            print("An exception occurred:", type(e).__name__)
+            print("Exception details:", str(e))
         except :
             sio.emit(clientSID, "Unknown error")
-            
+
     elif command == 'resume':
         try :
             get_resume(clientSID)
@@ -384,11 +428,10 @@ def midnight_update():
 
 eventlet.spawn(midnight_update)
 
-
-
 # Start websocket
 sio = socketio.Server(cors_allowed_origins="*")
 app = socketio.WSGIApp(sio)
+
 
 @sio.on('connect')
 def connect(sid, environ):
@@ -438,6 +481,8 @@ if __name__ == "__main__":
         json.dump(main_json, json_file, indent=4)
     print('Successfully copy all valid message from blockchain index')
 
-
-    eventlet.wsgi.server(eventlet.listen(('0.0.0.0', 8765)), app)
+    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        eventlet.wsgi.server(eventlet.wrap_ssl(eventlet.listen(('0.0.0.0', 8443)),certfile=ssl_cert,keyfile=ssl_key,server_side=True), app)
+    else:
+        eventlet.wsgi.server(eventlet.listen(('0.0.0.0', 8765)), app)
 
