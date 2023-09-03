@@ -101,7 +101,7 @@ def ECDSA_begin():
     #if privateKey is not exist, create pem file
     if os.path.exists(private_key_path) == False:
         # Create new privateKey
-        privateKey = PrivateKey()s
+        privateKey = PrivateKey()
         privateKeyPem = privateKey.toPem()
         
         f = open(private_key_path, "w")
