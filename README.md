@@ -52,6 +52,11 @@ pip install eventlet
 pip install starkbank-ecdsa
 ```
 
+- Pysha
+```
+pip install pysha3
+```
+
 ## Running on Your System
 - Open terminal and clone this repository
 ```
@@ -157,3 +162,120 @@ Before use this code for production, please note several things.
    Buy a domain and install a SSL for websocket
 
   
+
+## Upgrade Websocket to Websocket Secure 
+This step is adding SSL to websocket connection, so HTTPS website can connect with our websocket.
+
+Before start, you need to have a domain, cheap domain is ok.
+
+1. Install Nginx
+   
+   ```
+   sudo apt-get update
+   ```
+   ```
+   sudo apt-get install certbot python3-certbot-nginx nginx
+   ```
+
+   If there is error to install Nginx like unable to ..., please follow steps below.
+
+   - Change download mirror
+   ```
+   sudo nano /etc/apt/sources.list
+   ```
+   - Change all mirror link to `deb http://archive.ubuntu.com/ubuntu ... `
+   - Update system
+   ```
+   sudo apt-get update
+   ```
+   ```
+   sudo apt-get upgrade
+   ```
+
+2. Update DNS in your domain management
+   
+   - A record ==> point to your IP address
+   - CNAME ==> www point to your-domain.com
+   - wait until you can ping your-domain.com
+     
+3. Configure Nginx
+
+   Change `<your-domain.com>` with domain that you have prepared before (without `<` and `>`).
+
+   - Create SSL certificate
+   ```
+   sudo certbot --nginx -d <your-domain.com>
+   ```
+   - Configure Nginx
+   ```
+   sudo nano /etc/nginx/sites-available/<your-domain.com>
+   ```
+   - Fill that file with
+   ```
+   server {
+       listen 443 ssl;
+       server_name <your-domain.com>;
+   
+       ssl_certificate /etc/letsencrypt/live/<your-domain.com>/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/<your-domain.com>/privkey.pem;
+   
+       location /socket.io {
+           proxy_pass http://127.0.0.1:8443/socket.io;  # Updated to port 8443
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Forwarded-Host $host;
+           proxy_set_header X-Forwarded-Port $server_port;
+       }
+   
+       # Other server configuration, if needed
+   }
+   ```
+   - Enable Nginx configuration
+   ```
+   sudo ln -s /etc/nginx/sites-available/<your-domain.com> /etc/nginx/sites-enabled/
+   ```
+   - Test Nginx
+   ```
+   sudo nginx -t
+   ```
+   - Restart Nginx
+   ```
+   sudo systemctl restart nginx
+   ```
+   
+4. Configure firewall
+
+   Please be cautious, it may block your SSH connection if not configured properly
+
+   ```
+   sudo ufw status
+   ```
+   Change `<your_ssh_port>` with port that you use for SSH connection. As default, it is `22`
+   
+   ```
+   sudo ufw allow 443/tcp
+   sudo ufw allow 8443
+   sudo ufw allow <your_ssh_port>
+   sudo ufw allow OpenSSH
+   ```
+   ```
+   sudo ufw enable
+   ```
+   ```
+   sudo ufw reload
+   ```
+
+5. If there is error like `permission denied` please follow steps below
+   
+   ```
+   sudo chmod 755 /etc/letsencrypt/live/
+   sudo chmod 755 /etc/letsencrypt/archive/
+   ```
+   ```
+   sudo chown -R $USER /etc/letsencrypt/
+   ```
