@@ -70,7 +70,6 @@ def upload(data, index_msg):
     global tangle_msg_id
     tangle_msg_id = tangle_return['message_id']
     
-    
     # If there is new submitted message, read data.json and append new data
     new_data_str = '[{"msgID":"' + tangle_msg_id + '"},' + payload + ']'
     # load as JSON
@@ -84,8 +83,9 @@ def upload(data, index_msg):
         json.dump(existing_data, json_file, indent=4)
 
     print("New data added to record")
-    
 
+
+    return tangle_msg_id
 
     
 #=======================================================================
@@ -107,6 +107,108 @@ def ECDSA_begin():
         f = open(private_key_path, "w")
         f.write(privateKeyPem)
         f.close()
+
+
+#=======================================================================
+# Function to create a new road report
+# parameter:
+#    - msg_data : all data to upload (in JSON compatible format)
+#    - emit_address : address to return the status to client
+#
+# return IOTA Tangle msg_id if success
+#=======================================================================
+def create_report(msg_data, emit_address):
+    try:
+        # must support JSON compatible format
+        inputJSON = json.loads(msg_data)
+        
+        # make sure type is correct
+        if inputJSON['type'] == 'report':
+            # bypass process
+            upload_status = upload(msg_data, road_inspect_index)
+            print('Create report status : ' + upload_status)
+            sio.emit(emit_address, upload_status)
+            return
+
+    except Exception as e:
+        print("An exception occurred:", type(e).__name__)
+        print("Exception details:", str(e))
+        error_msg = "Error to upload: " + str(e)
+        sio.emit(emit_address, error_msg)
+
+#=======================================================================
+# Function to update road report
+# parameter:
+#    - reference_ticket : latest ticket from main branch report
+#    - user_key : key to unlock the report
+#    - emit_address : address to return the status to client
+#
+# return IOTA Tangle msg_id if success
+#=======================================================================
+def update_report(last_ticket, user_key, emit_address):
+    try:
+        # calculate user key hash for verification
+        keccak256 = sha3.keccak_256()
+        keccak256.update(user_key)
+        user_keyword_hash = str(keccak256.hexdigest())
+        
+        # search reference in copied blockchain data
+        saved_json = []
+        
+        with open(blockchain_index_json_path, 'r') as json_file:
+            saved_json = json.load(json_file)
+            
+        for i in range(len(saved_json)):
+            if saved_json[i][0]['msgID'] == last_ticket:
+                # create new report structure
+                update_report = ''
+                update_ticket = ''
+                prev_type = saved_json[i][1]['message']['data']['type']
+                
+                # if prev report is report
+                if prev_type == 'report':
+                    update_type = '{"type":"fixing",'
+               
+               # if prev report is fixing
+                elif prev_type == 'fixing':
+                    update_type = '{"type":"finish",'
+                    
+                else:
+                    return
+                
+                # else, return error
+                update_issuer = '"issuer":"' + saved_json[i][1]['message']['data']['issuer'] + '",'
+                update_ticket = '"ticket":"' + saved_json[i][0]['msgID'] + '",'
+                update_roadName = '"roadName":"' + saved_json[i][1]['message']['data']['roadName'] + '",'
+                update_lat = '"lat":"' + saved_json[i][1]['message']['data']['lat'] + '",'
+                update_long = '"long":"' + saved_json[i][1]['message']['data']['long'] + '",'
+                update_desc = '"desc":"' + saved_json[i][1]['message']['data']['desc'] + '",'
+                update_hashKey = '"hashKey":"' + saved_json[i][1]['message']['data']['hashKey'] + '"}'
+                
+                update_message = update_type + update_issuer + update_ticket + update_roadName + update_lat + update_long + update_desc + update_hashKey
+                
+                # check is target has key is same or not
+                if user_keyword_hash == saved_json[i][1]['message']['data']['hashKey']:
+                    print('Uploading update')
+                    upload_status = upload(update_message, road_inspect_index)
+                    print('Update report status from ' + prev_type + ' to ' + update_type)
+                    print('Update status : ' + upload_status)
+                    sio.emit(emit_address, upload_status)
+                    return
+                
+                else :
+                    # tell client that the key is wrong
+                    sio.emit(emit_address, 'Error: Key is not match')
+                    return
+          
+    except KeyError:
+        sio.emit(emit_address, "Error: key is not match")
+        
+    except Exception as e:
+        print("An exception occurred:", type(e).__name__)
+        print("Exception details:", str(e))
+        error_msg = "Error to upload: " + str(e)
+        sio.emit(emit_address, error_msg)
 
 
 #=======================================================================
@@ -205,7 +307,7 @@ def get_resume(emit_address):
         # from 'report' to 'fixing' or 'finish'
         #
         # If there is 'fixing' or 'finish' type, check it ticket
-        # If match, set report_json type to 'fixing' or 'finish'
+        # If match, replace with new 'fixing' or 'finish'
         #===============================================================
         report_json = [entry for entry in sorted_valid_json if entry[1]['message']['data']['type'] == 'report']
         
@@ -218,15 +320,14 @@ def get_resume(emit_address):
                 target_ticket = sorted_valid_json[i][1]['message']['data']['ticket']
                 for j in range(len(report_json)):
                     if report_json[j][0]['msgID'] == target_ticket:
-                        report_json[j][1]['message']['data']['type'] = 'fixing'
+                        report_json[j] = sorted_valid_json[i]
                         
             #================= Finish ========================================
             elif sorted_json_type == 'finish':
                 target_ticket = sorted_valid_json[i][1]['message']['data']['ticket']
                 for j in range(len(report_json)):
                     if report_json[j][0]['msgID'] == target_ticket:
-                        report_json[j][1]['message']['data']['type'] = 'finish'
-
+                        report_json[j] = sorted_valid_json[i]
 
         #===============================================================
         # Non-finish report
@@ -234,7 +335,6 @@ def get_resume(emit_address):
         # This process will only give report that not finished yet
         #===============================================================
         resume_json = [entry for entry in report_json if entry[1]['message']['data']['type'] != 'finish']
-        
         sio.emit(emit_address, resume_json)
 
     except Exception as e:
@@ -247,46 +347,90 @@ def get_resume(emit_address):
 # Function to get information of a ticket ID
 # return JSON data that contain ticket ID and other linked message
 #=======================================================================
+def search_backward(backward_ticket):
+    backward_result = []
+    id_to_search = backward_ticket
+    is_search = True
+
+    json_db = []
+    # Read the JSON data from the file
+    with open(blockchain_index_json_path, 'r') as json_file:
+        json_db = json.load(json_file)
+    
+    while(is_search == True):
+        for i in range(len(json_db)):
+            if json_db[i][0]['msgID'] == id_to_search:
+                backward_result.append(json_db[i])
+                
+                # check if this data has 'ticket' for reference
+                if 'ticket' in json_db[i][1]['message']['data']:
+                    # search again
+                    id_to_search = json_db[i][1]['message']['data']['ticket']
+                    # reset while loop
+                    i = len(json_db)-1
+                
+                # if no ticket, end while loop
+                else:
+                    is_search = False
+    
+    return backward_result
+
+
+
+def search_forward(forward_ticket):
+    forward_result = []
+    id_to_search = forward_ticket
+
+    json_db = []
+    # Read the JSON data from the file
+    with open(blockchain_index_json_path, 'r') as json_file:
+        json_db = json.load(json_file)
+
+    for i in range(len(json_db)):
+        if 'ticket' in json_db[i][1]['message']['data']:
+            if json_db[i][1]['message']['data']['ticket'] == id_to_search:
+                forward_result.append(json_db[i])
+                
+                # search once again
+                id_to_search = json_db[i][0]['msgID']
+                for j in range(len(json_db)):
+                    if 'ticket' in json_db[j][1]['message']['data']:
+                        if json_db[j][1]['message']['data']['ticket'] == id_to_search:
+                            forward_result.append(json_db[j])
+                            
+                            # immidiately return
+                            return forward_result
+                
+                # if second search didnt give result
+                # immidiately return
+                return forward_result
+            
+    return forward_result
+
+
 def ticket_info(ticketID, emit_address):
     try:
         ticket_output = []
-        ticket_reference = ""
-        has_ticket = False
         
-        sorted_valid_json = []
-        
+        sorted_valid_json = []        
         # Read the JSON data from the file
         with open(blockchain_index_json_path, 'r') as json_file:
             sorted_valid_json = json.load(json_file)
-            
+        
         # get main message data
         for i in range(len(sorted_valid_json)):
             if sorted_valid_json[i][0]['msgID'] == ticketID:
                 ticket_output.append(sorted_valid_json[i])
-                if 'ticket' in sorted_valid_json[i][1]['message']['data']:
-                    has_ticket = True
-                    ticket_reference = sorted_valid_json[i][1]['message']['data']['ticket']
-                    
-                # remove from list
-                sorted_valid_json.pop(i)
-                break
-        
-        if has_ticket == True:
-            # search main id
-            for i in range(len(sorted_valid_json)):
-                if sorted_valid_json[i][0]['msgID'] == ticketID:
-                    ticket_output.append(sorted_valid_json[i])
-                    
-                    # remove from list
-                    sorted_valid_json.pop(i)
-                    break
-        
-        # search other referenced data until end of line
-        for i in range(len(sorted_valid_json)):
-            if 'ticket' in sorted_valid_json[i][1]['message']['data']:
-                if sorted_valid_json[i][1]['message']['data']['ticket'] == ticketID:
-                    ticket_output.append(sorted_valid_json[i])
                 
+                # if has reference ticket, do search backward
+                if 'ticket' in sorted_valid_json[i][1]['message']['data']:
+                    # search backward
+                    ticket_output += search_backward(sorted_valid_json[i][1]['message']['data']['ticket'])
+        
+                # search forward
+                ticket_output += search_forward(ticketID)
+
+        # send result to client
         sio.emit(emit_address, ticket_output)
 
     except Exception as e:
@@ -317,75 +461,30 @@ def do_command(full_input_command):
         except ValueError :
             sio.emit(clientSID, "Error to convert compressed public key to PEM format")
         except :
-            sio.emit(clientSID, "Unknown error")
+            sio.emit(clientSID, "Error to process public key")
 
-    # Upload data to tangle
-    # Format: data/<parameter_value>/<return_topic>/<specified_tag_index>/<user_key>
-    elif command == 'data':
-        try :
+    # Create a road report
+    # Format: create/<parameter_value>/<return_topic>
+    elif command == "create":
+        try:
             parameter_value = parameter_value.replace("'", '"')
-            tag_index = parsing_data[3]
+            create_report(parameter_value, clientSID)
+        except : 
+            sio.emit(clientSID, "Error")
             
+    # Update status of road report
+    # Format: update/<parameter_value>/<return_topic>/<user_key>
+    elif command == "update":
+        try:
             # Calculate user keyword hash
-            user_keyword = parsing_data[4].encode('utf-8')
-            keccak256 = sha3.keccak_256()
-            keccak256.update(user_keyword)
-            user_keyword_hash = str(keccak256.hexdigest())
-
-            # Seek for hashKey in target ticket
-            target_hash_key = ''
-            inputJSON = json.loads(parameter_value)
-            
-            # if type is 'report', bypass process
-            # it not, check for hashKey
-            if inputJSON['type'] == 'report':
-                # bypass process
-                upload(parameter_value, tag_index)
-                sio.emit(clientSID, tangle_msg_id)
-                return
-            
-            else :
-                # search it reference ticket
-                reference_ticket = inputJSON['ticket']
-                
-                saved_json = []
-                # Read the JSON data from the file
-                with open(blockchain_index_json_path, 'r') as json_file:
-                    saved_json = json.load(json_file)
-                
-                # get hashKey of reference ticket
-                for y in range(len(saved_json)):
-                    if saved_json[y][0]['msgID'] == reference_ticket:
-                        if "hashKey" in saved_json[y][1]['message']['data'] :
-                            target_hash_key = saved_json[y][1]['message']['data']['hashKey']
-                            
-                            # check is target has key is same or not
-                            if user_keyword_hash == target_hash_key:
-                                upload(parameter_value, tag_index)
-                                sio.emit(clientSID, tangle_msg_id)
-                                return
-                            
-                            else :
-                                # tell client that the key is wrong
-                                sio.emit(clientSID, 'Error: Key is not match')
-                                return
-                        
-                        # if hash key not found, bypass
-                        else :
-                            upload(parameter_value, tag_index)
-                            sio.emit(clientSID, tangle_msg_id)
-                            return
-                        
-        except ValueError :
-            sio.emit(clientSID, "Error to upload to Tangle")
-        except IndexError :
-            sio.emit(clientSID, "Format command not found")
+            parameter_value = parameter_value.replace("'", '"')
+            user_keyword = parsing_data[3].encode('utf-8')
+            update_report(parameter_value, user_keyword, clientSID)
         except Exception as e:
             print("An exception occurred:", type(e).__name__)
             print("Exception details:", str(e))
-        except :
-            sio.emit(clientSID, "Unknown error")
-
+            sio.emit(clientSID, "Error")
+            
     elif command == 'resume':
         try :
             get_resume(clientSID)
@@ -474,7 +573,8 @@ if __name__ == "__main__":
     print(client.get_info())
     
     # Copy all blockchain message from index to ./home/<machine_name>/.road-inspect-core
-    print('synchronization process')
+    print('Synchronization process')
+    print('Index : ' + road_inspect_index)
     main_json = []
     main_json = get_valid_msg()
     with open(blockchain_index_json_path, 'w') as json_file:
