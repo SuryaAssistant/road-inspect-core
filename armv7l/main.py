@@ -576,6 +576,17 @@ def message(sid, inputMessage):
 # Next, it will act based on input command from MQTT input.
 #=======================================================================
 if __name__ == "__main__":
+    # Send print to journalctl
+    import sys
+    import logging
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, filename='/var/log/road-inspect-core.log', filemode='a', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Create a logger
+    logger = logging.getLogger('road-inspect-core')
+    # Redirect stdout to the logger
+    sys.stdout = logger
+    
+    
     # Configure ECDSA
     ECDSA_begin()
     
@@ -588,6 +599,7 @@ if __name__ == "__main__":
     print('Index : ' + road_inspect_index)
 
     main_json = get_valid_msg()
+    
     with open(blockchain_index_json_path, 'w') as json_file:
         json.dump(main_json, json_file, indent=4)
     print('Successfully copy all valid message from blockchain index')
