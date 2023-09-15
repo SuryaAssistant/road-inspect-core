@@ -232,11 +232,22 @@ def get_valid_msg():
         # Read all message in road-inspect-index
         msg_id_list= client.get_message_index(road_inspect_index)
         complete_data = "["
+        print("Read message list in index")
 
         # get payload for every message ID
-        for i in range(len(msg_id_list)):
-            full_data = client.get_message_data(msg_id_list[i]) 
+        for i in range(len(msg_id_list)):            
+            full_data = "no data"
+            full_message = ""
             
+            # skip message if there is error when download
+            try:
+                full_data = client.get_message_data(msg_id_list[i])
+                
+            except Exception as e:
+                print("Message ID " + msg_id_list[i] + " is skipped.")
+                print("Exception details:", str(e))
+                continue
+                
             # do ECDSA verification
             payload_byte = full_data["payload"]["indexation"][0]["data"]
             full_message=''
@@ -247,7 +258,7 @@ def get_valid_msg():
             msg_start_index = full_message.find("message") - 1
             msg_end_index = full_message.find("publicKey") - 2
             message = full_message[msg_start_index:msg_end_index]
-                        
+            
             # get signature
             try:
                 data_json = json.loads(full_message)
@@ -542,7 +553,7 @@ def disconnect(sid):
 
 @sio.on('submit')
 def message(sid, inputMessage):
-    print("INPUT ===> " + inputMessage)
+    print("Client request ===> " + inputMessage)
     
     # Check if it's within the midnight window (23:55 - 00:05)
     if is_midnight_window():
@@ -565,6 +576,17 @@ def message(sid, inputMessage):
 # Next, it will act based on input command from MQTT input.
 #=======================================================================
 if __name__ == "__main__":
+    # Send print to journalctl
+    import sys
+    import logging
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, filename='/var/log/road-inspect-core.log', filemode='a', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Create a logger
+    logger = logging.getLogger('road-inspect-core')
+    # Redirect stdout to the logger
+    sys.stdout = logger
+    
+    
     # Configure ECDSA
     ECDSA_begin()
     
@@ -575,8 +597,9 @@ if __name__ == "__main__":
     # Copy all blockchain message from index to ./home/<machine_name>/.road-inspect-core
     print('Synchronization process')
     print('Index : ' + road_inspect_index)
-    main_json = []
+
     main_json = get_valid_msg()
+    
     with open(blockchain_index_json_path, 'w') as json_file:
         json.dump(main_json, json_file, indent=4)
     print('Successfully copy all valid message from blockchain index')
